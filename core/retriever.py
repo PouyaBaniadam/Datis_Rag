@@ -5,9 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from core.embeddings import Embedder
 
-
 class Retriever:
-
     def __init__(
             self,
             chunks_path: str = "Data/chunks.json",
@@ -31,10 +29,7 @@ class Retriever:
         dim = self.embeddings.shape[1]
         self.index = faiss.IndexFlatIP(dim)
         self.index.add(self.embeddings)
-
         self.embedder = Embedder(device=device)
-
-        print(f"[Retriever] Loaded {len(self.chunks)} chunks with metadata and embeddings")
 
     def retrieve(
             self,
@@ -44,9 +39,9 @@ class Retriever:
             abs_min_score: float = 0.30,
             rel_score_drop: float = 0.7,
             fallback_top_k: int = 3,
+            api_key: str = None
     ) -> List[Dict]:
         index_dim = self.index.d
-
         target_model = embedding_type
         if target_model == "api":
             target_model = "text-embedding-3-small"
@@ -54,23 +49,19 @@ class Retriever:
         if target_model == "local":
             query_emb = self.embedder.embed_query_local(query).astype("float32")
         else:
-            query_emb = self.embedder.embed_query_api(query, model=target_model).astype("float32")
+            query_emb = self.embedder.embed_query_api(query, model=target_model, api_key=api_key).astype("float32")
 
         if query_emb.shape[0] != index_dim:
-            print(f"[Retriever] Dimension mismatch: query is {query_emb.shape[0]} but FAISS expects {index_dim}.")
-            print(f"[Retriever] Automatically falling back to index-compatible model...")
-
             if index_dim == 1536:
-                query_emb = self.embedder.embed_query_api(query, model="text-embedding-3-small").astype("float32")
+                query_emb = self.embedder.embed_query_api(query, model="text-embedding-3-small", api_key=api_key).astype("float32")
             elif index_dim == 384:
                 query_emb = self.embedder.embed_query_local(query).astype("float32")
             elif index_dim == 3072:
-                query_emb = self.embedder.embed_query_api(query, model="text-embedding-3-large").astype("float32")
+                query_emb = self.embedder.embed_query_api(query, model="text-embedding-3-large", api_key=api_key).astype("float32")
             else:
-                query_emb = self.embedder.embed_query_api(query, model="text-embedding-3-small").astype("float32")
+                query_emb = self.embedder.embed_query_api(query, model="text-embedding-3-small", api_key=api_key).astype("float32")
 
         faiss.normalize_L2(query_emb.reshape(1, -1))
-
         scores, indices = self.index.search(query_emb.reshape(1, -1), self.chunks.__len__())
         scores, indices = scores[0], indices[0]
 

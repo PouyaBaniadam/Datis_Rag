@@ -13,10 +13,8 @@ CHUNKS_PATH = DOC_PATH / "chunks.json"
 METADATA_PATH = DOC_PATH / "metadata.json"
 EMBEDDINGS_PATH = DOC_PATH / "embeddings.npy"
 
-
 class EmbeddingBuilder:
-
-    def __init__(self, embedding_type: str = "text-embedding-3-small", chunk_size: int = 700, overlap_sentences: int = 2, batch_size: int = 8):
+    def __init__(self, embedding_type: str = "text-embedding-3-small", chunk_size: int = 700, overlap_sentences: int = 2, batch_size: int = 8, api_key: str = None):
         self.chunk_size = chunk_size
         self.overlap_sentences = overlap_sentences
         self.batch_size = batch_size
@@ -24,6 +22,7 @@ class EmbeddingBuilder:
             model_name_api=embedding_type
         )
         self.embedding_type = embedding_type
+        self.api_key = api_key
 
     def chunk_doc(self, pages: List[Dict], doc_id):
         chunks = []
@@ -76,37 +75,28 @@ class EmbeddingBuilder:
     def embed_chunks(self, chunks: List[str]) -> np.ndarray:
         all_embeddings = []
         total_chunks = len(chunks)
-        print(f"[Build] Total chunks to embed: {total_chunks}")
 
         for i in range(0, total_chunks, self.batch_size):
             batch = chunks[i:i + self.batch_size]
-            current_end = min(i + self.batch_size, total_chunks)
-            print(f"[Build] Sending batch {i // self.batch_size + 1}: processing chunks {i} to {current_end}...")
-
             if self.embedding_type == "local":
                 emb = self.embedder.embed_text_local(batch)
             else:
-                emb = self.embedder.embed_text_api(batch, model=self.embedding_type)
+                emb = self.embedder.embed_text_api(batch, model=self.embedding_type, api_key=self.api_key)
             all_embeddings.append(emb)
 
-        print("[Build] All embeddings received successfully.")
         return np.vstack(all_embeddings)
 
     def build(self):
-        print("[Building] Starting pipeline...")
         all_chunks = []
         all_metadata = []
         all_embeddings = []
 
         pdf_files = list(DOC_PATH.glob("*.pdf"))
         if not pdf_files:
-            print("[Build] Warning: No PDF files found in Data/ directory.")
             return
 
         for pdf_path in pdf_files:
-            print(f"[Build] Processing PDF: {pdf_path.name}")
             doc_id = pdf_path.name
-
             processed_path = DOC_PATH / f"processed_{doc_id}.json"
 
             self.pdf_processor = DockumentProcessor(
@@ -131,5 +121,3 @@ class EmbeddingBuilder:
 
         with open(METADATA_PATH, "w", encoding="utf-8") as f:
             json.dump(all_metadata, f, ensure_ascii=False)
-
-        print("[Build] Database build process finished successfully.")

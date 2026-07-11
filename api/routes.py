@@ -1,9 +1,8 @@
 import json
 import os
 import shutil
-import traceback
 import asyncio
-from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, WebSocket, WebSocketDisconnect, Form
+from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, WebSocket, WebSocketDisconnect, Form, Header
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -40,8 +39,14 @@ def get_retriever():
                 device="cpu"
             )
             return retriever
-        except Exception as e:
+        except Exception:
             return None
+    return None
+
+
+def extract_api_key(authorization: str) -> str:
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.split(" ")[1]
     return None
 
 
@@ -83,15 +88,20 @@ def get_session_messages(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/upload")
-def upload_pdf_file(file: UploadFile = File(...), embedding_type: str = Form("text-embedding-3-small")):
+def upload_pdf_file(
+    file: UploadFile = File(...),
+    embedding_type: str = Form("text-embedding-3-small"),
+    authorization: str = Header(None)
+):
     try:
+        api_key = extract_api_key(authorization)
         os.makedirs(DATA_DIR, exist_ok=True)
         file_location = os.path.join(DATA_DIR, file.filename)
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         from core.build_embeddings import EmbeddingBuilder
-        builder = EmbeddingBuilder(embedding_type=embedding_type)
+        builder = EmbeddingBuilder(embedding_type=embedding_type, api_key=api_key)
         builder.build()
 
         global retriever
@@ -99,12 +109,15 @@ def upload_pdf_file(file: UploadFile = File(...), embedding_type: str = Form("te
 
         return {"message": "File processed and indexed successfully."}
     except Exception as e:
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(e)}")
 
 
 @router.post("/chat")
-def chat_with_document(request: ChatRequest, db: Session = Depends(get_db)):
+def chat_with_document(
+    request: ChatRequest,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
     current_retriever = get_retriever()
     if not current_retriever:
         raise HTTPException(
@@ -117,6 +130,7 @@ def chat_with_document(request: ChatRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Chat session not found")
 
     try:
+        api_key = extract_api_key(authorization)
         user_msg = ChatMessage(
             session_id=request.session_id,
             role="user",
@@ -128,11 +142,12 @@ def chat_with_document(request: ChatRequest, db: Session = Depends(get_db)):
         results = current_retriever.retrieve(
             request.query,
             embedding_type=request.embedding_type,
-            top_k=request.top_k
+            top_k=request.top_k,
+            api_key=api_key
         )
 
         if not results:
-            assistant_response = "I could not find relevant information in the documents."
+            assistant_response = "اطلاعات مرتبطی در اسناد پیدا نشد."
             sources_json = "[]"
         else:
             context_blocks = []
@@ -140,9 +155,9 @@ def chat_with_document(request: ChatRequest, db: Session = Depends(get_db)):
                 context_blocks.append(f"[{i}] {r['text']}")
             context_text = "\n\n".join(context_blocks)
 
-            prompt = f"Use the following texts to answer the question.\n\nTexts:\n{context_text}\n\nQuestion:\n{request.query}"
+            prompt = f"با استفاده از متن‌های زیر، به سوال پاسخ دهید. حتماً پاسخ خود را به زبان فارسی بنویسید.\n\nمتن‌ها:\n{context_text}\n\nسوال:\n{request.query}"
 
-            assistant_response = llm_manager.generate(prompt, request.model_type)
+            assistant_response = llm_manager.generate(prompt, request.model_type, api_key=api_key)
 
             simplified_sources = [
                 {
@@ -176,14 +191,11 @@ def chat_with_document(request: ChatRequest, db: Session = Depends(get_db)):
 
 @router.websocket("/ws/chat")
 async def websocket_chat_endpoint(websocket: WebSocket, db: Session = Depends(get_db)):
-    print("\n[WS Server] Connecting request received...")
     await websocket.accept()
-    print("[WS Server] Connection accepted and established successfully.")
 
     try:
         while True:
             data = await websocket.receive_text()
-            print(f"[WS Server] Raw payload received from Flutter: {data}")
             request_data = json.loads(data)
 
             query = request_data["query"]
@@ -191,22 +203,18 @@ async def websocket_chat_endpoint(websocket: WebSocket, db: Session = Depends(ge
             model_type = request_data["model_type"]
             embedding_type = request_data.get("embedding_type", "api")
             top_k = request_data.get("top_k", 3)
+            api_key = request_data.get("api_key")
 
-            print(f"[WS Server] Saving User message in database for Session ID: {session_id}")
             user_msg = ChatMessage(session_id=session_id, role="user", content=query)
             db.add(user_msg)
             db.commit()
 
-            print("[WS Server] Initializing/fetching retriever...")
             current_retriever = get_retriever()
             if not current_retriever:
-                print("[WS Server] Error: Retriever could not be loaded!")
                 await websocket.send_json({"type": "error", "content": "System data not found."})
                 continue
 
-            print(f"[WS Server] Searching document context chunks via Retriever (Embedding: {embedding_type})")
-            results = current_retriever.retrieve(query, embedding_type=embedding_type, top_k=top_k)
-            print(f"[WS Server] Retrieval complete. Found {len(results)} context chunks.")
+            results = current_retriever.retrieve(query, embedding_type=embedding_type, top_k=top_k, api_key=api_key)
 
             simplified_sources = [
                 {
@@ -217,24 +225,18 @@ async def websocket_chat_endpoint(websocket: WebSocket, db: Session = Depends(ge
                 } for r in results
             ]
 
-            print("[WS Server] Sending source references to Flutter Client...")
             await websocket.send_json({"type": "sources", "content": simplified_sources})
 
             context_blocks = [f"[{i}] {r['text']}" for i, r in enumerate(results, 1)]
             context_text = "\n\n".join(context_blocks)
-            prompt = f"Use the following texts to answer the question.\n\nTexts:\n{context_text}\n\nQuestion:\n{query}"
+            prompt = f"با استفاده از متن‌های زیر، به سوال پاسخ دهید. حتماً پاسخ خود را به زبان فارسی بنویسید.\n\nمتن‌ها:\n{context_text}\n\nسوال:\n{query}"
 
-            print(f"[WS Server] Initiating LLM Generation Stream (Model: {model_type})...")
             full_response = ""
 
-            for token in llm_manager.generate_stream(prompt, model_type):
+            for token in llm_manager.generate_stream(prompt, model_type, api_key=api_key):
                 full_response += token
-                print(f"[WS Server] Yielding token: {repr(token)}")
                 await websocket.send_json({"type": "token", "content": token})
                 await asyncio.sleep(0.001)
-
-            print(f"[WS Server] LLM Stream finished. Response length: {len(full_response)} chars.")
-            print("[WS Server] Saving Assistant full response in database...")
 
             assistant_msg = ChatMessage(
                 session_id=session_id,
@@ -245,15 +247,35 @@ async def websocket_chat_endpoint(websocket: WebSocket, db: Session = Depends(ge
             db.add(assistant_msg)
             db.commit()
 
-            print("[WS Server] Sending done status to Flutter Client.")
             await websocket.send_json({"type": "done"})
 
     except WebSocketDisconnect:
-        print("[WS Server] Connection disconnected by client.")
+        pass
     except Exception as e:
-        print(f"[WS Server] Fatal Exception occurred: {e}")
-        traceback.print_exc()
         try:
             await websocket.send_json({"type": "error", "content": str(e)})
-        except:
+        except Exception:
             pass
+
+
+# این دو تابع را به انتهای فایل routes.py اضافه کنید:
+
+@router.put("/sessions/{session_id}", response_model=SessionResponse)
+def rename_session(session_id: int, session_data: SessionCreate, db: Session = Depends(get_db)):
+    db_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not db_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    db_session.title = session_data.title
+    db.commit()
+    db.refresh(db_session)
+    return db_session
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(session_id: int, db: Session = Depends(get_db)):
+    db_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not db_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    db.delete(db_session)
+    db.commit()
+    return {"message": "Session deleted successfully"}

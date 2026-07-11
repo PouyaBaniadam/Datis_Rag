@@ -26,28 +26,24 @@ class OpenRouterLLM:
         self.max_tokens = max_tokens
         self.system_prompt = system_prompt
 
-    def generate(self, prompt: str, model: str = None) -> str:
+    def generate(self, prompt: str, model: str = None, api_key: str = None) -> str:
         target_model = model if model else self.model
-        response = self.client.chat.completions.create(
+        client = OpenAI(api_key=api_key, base_url=self.client.base_url) if api_key else self.client
+        response = client.chat.completions.create(
             model=target_model,
             messages=[
-                {
-                    "role": "system",
-                    "content": self.system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt},
             ],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
         )
         return response.choices[0].message.content.strip()
 
-    def generate_stream(self, prompt: str, model: str = None):
+    def generate_stream(self, prompt: str, model: str = None, api_key: str = None):
         target_model = model if model else self.model
-        response = self.client.chat.completions.create(
+        client = OpenAI(api_key=api_key, base_url=self.client.base_url) if api_key else self.client
+        response = client.chat.completions.create(
             model=target_model,
             messages=[
                 {"role": "system", "content": self.system_prompt},
