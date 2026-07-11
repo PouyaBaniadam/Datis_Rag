@@ -9,12 +9,11 @@ from hazm import sent_tokenize
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOC_PATH = Path(os.path.join(BASE_DIR, "Data"))
-CHUNKS_PATH = DOC_PATH / "chunks.json"
-METADATA_PATH = DOC_PATH / "metadata.json"
-EMBEDDINGS_PATH = DOC_PATH / "embeddings.npy"
+
 
 class EmbeddingBuilder:
-    def __init__(self, embedding_type: str = "text-embedding-3-small", chunk_size: int = 700, overlap_sentences: int = 2, batch_size: int = 8, api_key: str = None):
+    def __init__(self, session_id: int, embedding_type: str = "text-embedding-3-small", chunk_size: int = 700,
+                 overlap_sentences: int = 2, batch_size: int = 8, api_key: str = None):
         self.chunk_size = chunk_size
         self.overlap_sentences = overlap_sentences
         self.batch_size = batch_size
@@ -23,6 +22,7 @@ class EmbeddingBuilder:
         )
         self.embedding_type = embedding_type
         self.api_key = api_key
+        self.session_id = session_id
 
     def chunk_doc(self, pages: List[Dict], doc_id):
         chunks = []
@@ -114,10 +114,18 @@ class EmbeddingBuilder:
             all_metadata.extend(metadata)
             all_embeddings.append(embeddings)
 
-        np.save(EMBEDDINGS_PATH, np.vstack(all_embeddings))
+        chunks_path = DOC_PATH / f"session_{self.session_id}_chunks.json"
+        metadata_path = DOC_PATH / f"session_{self.session_id}_metadata.json"
+        embeddings_path = DOC_PATH / f"session_{self.session_id}_embeddings.npy"
 
-        with open(CHUNKS_PATH, "w", encoding="utf-8") as f:
+        np.save(embeddings_path, np.vstack(all_embeddings))
+
+        with open(chunks_path, "w", encoding="utf-8") as f:
             json.dump(all_chunks, f, ensure_ascii=False)
 
-        with open(METADATA_PATH, "w", encoding="utf-8") as f:
+        with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(all_metadata, f, ensure_ascii=False)
+
+        if os.path.exists(processed_path):
+            os.remove(processed_path)
+        os.remove(pdf_path)

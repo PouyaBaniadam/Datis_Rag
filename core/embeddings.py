@@ -1,40 +1,34 @@
 import numpy as np
 from typing import List
 from openai import OpenAI
-from dotenv import load_dotenv
 import os
 
-load_dotenv()
-
-API_KEY = os.getenv('OPENAI_API_KEY')
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class Embedder:
     def __init__(
-        self,
-        embedder_type: str = 'api',
-        model_name: str = "intfloat/multilingual-e5-small",
-        device: str = 'cpu',
-        model_name_api: str = 'text-embedding-3-small',
-        base_url: str = 'https://api.gapgpt.app/v1',
-        api_key: str = API_KEY
+            self,
+            device: str = 'cpu',
+            model_name_api: str = 'text-embedding-3-small',
+            base_url: str = 'https://api.gapgpt.app/v1'
     ):
         self.device = device
         self.model_name = model_name_api
-        self.client = OpenAI(
-            base_url=base_url,
-            api_key=api_key
-        )
+        self.base_url = base_url
 
     def _load_local_model(self):
         if not hasattr(self, 'model'):
             from sentence_transformers import SentenceTransformer
             local_model_path = os.path.join(BASE_DIR, "models", "multilingual-e5-small")
+            if not os.path.exists(local_model_path):
+                raise FileNotFoundError(f"[Embedder] Model folder not found at: {local_model_path}")
             self.model = SentenceTransformer(local_model_path, device=self.device)
 
     def embed_text_api(self, texts: List[str], model: str = None, api_key: str = None) -> np.ndarray:
+        if not api_key or api_key.strip() == "":
+            raise ValueError("API Key is required for online embedding.")
         target_model = model if model else self.model_name
-        client = OpenAI(api_key=api_key, base_url=self.client.base_url) if api_key else self.client
+        client = OpenAI(api_key=api_key, base_url=self.base_url)
         prefixed_texts = [f"passage: {t}" for t in texts]
         response = client.embeddings.create(
             model=target_model,
@@ -44,8 +38,10 @@ class Embedder:
         return np.array(embeddings)
 
     def embed_query_api(self, query: str, model: str = None, api_key: str = None) -> np.ndarray:
+        if not api_key or api_key.strip() == "":
+            raise ValueError("API Key is required for online embedding.")
         target_model = model if model else self.model_name
-        client = OpenAI(api_key=api_key, base_url=self.client.base_url) if api_key else self.client
+        client = OpenAI(api_key=api_key, base_url=self.base_url)
         prefixed_query = f"query: {query}"
         response = client.embeddings.create(
             model=target_model,

@@ -1,9 +1,15 @@
 import json
+from typing import (
+    List,
+    Dict,
+    Optional,
+)
+
 import faiss
 import numpy as np
-from pathlib import Path
-from typing import List, Dict, Optional
+
 from core.embeddings import Embedder
+
 
 class Retriever:
     def __init__(
