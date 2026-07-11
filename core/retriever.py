@@ -44,7 +44,7 @@ class Retriever:
             top_k: int = 5,
             abs_min_score: float = 0.30,
             rel_score_drop: float = 0.7,
-            fallback_top_k: int = 3,
+            fallback_top_k: int = 5,
             api_key: str = None
     ) -> List[Dict]:
         index_dim = self.index.d

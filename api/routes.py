@@ -2,6 +2,8 @@ import json
 import os
 import shutil
 import asyncio
+import threading
+
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -22,6 +24,7 @@ from api.schemas import (
     SessionResponse,
     MessageResponse,
 )
+from core.download_manager import DownloadManager
 from core.llm_manager import LLMManager
 from core.retriever import Retriever
 from db.database import get_db
@@ -218,7 +221,7 @@ async def websocket_chat_endpoint(websocket: WebSocket, db: Session = Depends(ge
             session_id = request_data["session_id"]
             model_type = request_data["model_type"]
             embedding_type = request_data.get("embedding_type", "api")
-            top_k = request_data.get("top_k", 3)
+            top_k = request_data.get("top_k", 5)
             api_key = request_data.get("api_key")
             is_online_model = "gemma" not in model_type.lower() and "mistral" not in model_type.lower()
             is_online_emb = embedding_type != "local"
@@ -305,3 +308,55 @@ def delete_session(session_id: int, db: Session = Depends(get_db)):
         del retrievers[session_id]
 
     return {"message": "گفتگو با موفقیت حذف شد"}
+
+
+# project/api/routes.py (انتهای فایل)
+
+@router.get("/models/status")
+def get_models_status():
+    """اندپوینتی برای بررسی وضعیت موجود بودن مدل‌ها در لوکال"""
+    try:
+        status = DownloadManager.check_model_status()
+        return status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.websocket("/ws/download")
+async def websocket_download_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    download_thread = None
+
+    try:
+        data = await websocket.receive_json()
+        model_id = data.get("model_id")
+
+        await websocket.send_json({"type": "progress", "content": "در حال اتصال به سرورهای هاگینگ‌فیس..."})
+
+        def start_hf_download():
+            try:
+                DownloadManager.download_model_sync(model_id)
+            except Exception as e:
+                print(f"[HF DOWNLOAD ERROR] {str(e)}")
+
+        download_thread = threading.Thread(target=start_hf_download, daemon=True)
+        download_thread.start()
+
+        while download_thread.is_alive():
+            await asyncio.sleep(1)
+            await websocket.send_json({"type": "progress", "content": "در حال دریافت فایل‌های مدل از هاگینگ‌فیس..."})
+
+        await websocket.send_json({"type": "done"})
+
+    except WebSocketDisconnect:
+        print("[WS DOWNLOAD] کاربر اتصال را قطع کرد. دانلود بصری متوقف شد.")
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "content": str(e)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass

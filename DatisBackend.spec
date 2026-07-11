@@ -1,10 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_dynamic_libs
+
+binaries = []
+binaries += collect_dynamic_libs('llama_cpp')
 
 
 a = Analysis(
     ['run.py'],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=[],
     hiddenimports=[],
     hookspath=[],
